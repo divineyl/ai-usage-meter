@@ -1,0 +1,36 @@
+{
+  "name": "claude-usage-meter",
+  "version": "1.0.0",
+  "description": "每个 Claude Code 会话的 Token 拆分、按 API 价格的费用、5 小时/每周额度占比和订阅价折算",
+  "author": {
+    "name": "divineyl"
+  },
+  "homepage": "https://github.com/divineyl/ai-usage-meter",
+  "license": "MIT",
+  "userConfig": {
+    "monthlyPrice": {
+      "type": "number",
+      "title": "订阅月费",
+      "description": "你的订阅每月多少钱（用下面选的币种），用来把每周额度折算成钱。Pro 约 140 元 / 20 美元",
+      "default": 140
+    },
+    "weeksPerMonth": {
+      "type": "number",
+      "title": "每月按几周算",
+      "description": "每周额度价值 = 月费 ÷ 这个数",
+      "default": 4
+    },
+    "currency": {
+      "type": "string",
+      "title": "折算币种",
+      "description": "填 CNY 或 USD：月费的币种，也是折算结果显示的币种",
+      "default": "CNY"
+    },
+    "usdToCny": {
+      "type": "number",
+      "title": "美元兑人民币汇率",
+      "description": "API 价格是美元，显示人民币时用这个汇率换算",
+      "default": 6.8
+    }
+  }
+}

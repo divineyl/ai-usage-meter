@@ -1,0 +1,11 @@
+{
+  "name": "ai-usage-meter",
+  "owner": { "name": "divineyl" },
+  "plugins": [
+    {
+      "name": "claude-usage-meter",
+      "source": "./plugins/claude-usage-meter",
+      "description": "每个 Claude Code 会话的 Token 拆分、按 API 价格的费用、5 小时/每周额度占比和订阅价折算"
+    }
+  ]
+}
