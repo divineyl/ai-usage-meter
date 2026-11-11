@@ -26,7 +26,8 @@ const PRICES = {
   'claude-haiku-5-5': [0.1, 0.125, 0.2, 0.01, 0.5],
   'claude-haiku-4-5': [1, 1.25, 2, 0.1, 5]
 };
-// Haiku 5.5 prompts over 100K tokens cost 5x; fast mode (Opus) costs 2x.
+// Haiku 5.5 costs 5x when input + cache read + cache writes exceed 100K tokens.
+// usage.speed === 'fast' doubles that price again, whichever model sent the request.
 const HAIKU_LONG = 100000;
 // Claude Code keeps its data under CLAUDE_CONFIG_DIR when set, else ~/.claude.
 const root = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
@@ -34,7 +35,9 @@ const cacheFile = () => process.env.USAGE_METER_CACHE || path.join(os.tmpdir(), 
 const FIELDS = ['cacheRead', 'cacheWrite', 'uncachedInput', 'output'];
 
 function priceFor(model) {
+  if (typeof model !== 'string') return null;
   if (PRICES[model]) return PRICES[model];
+  // Dated snapshots (…-20260101 or …@20260101) use the longest listed id that is a prefix.
   const base = Object.keys(PRICES).find(id => model.startsWith(id + '-') || model.startsWith(id + '@'));
   return base ? PRICES[base] : null;
 }
@@ -57,11 +60,6 @@ function priceResponse(model, u) {
     output: scale * output * price[4] / 1e6
   };
   return { tokens, usd };
-}
-
-function requestCost(model, u) {
-  const { usd } = priceResponse(model, u);
-  return usd && FIELDS.reduce((sum, key) => sum + usd[key], 0);
 }
 
 function empty() {
@@ -176,7 +174,7 @@ function scanAll(weekStart, fiveStart) {
   };
 }
 
-module.exports = { scan, scanAll, requestCost, priceResponse, saveCache, PRICES };
+module.exports = { scan, scanAll, priceResponse, saveCache, PRICES };
 if (require.main === module) {
   const [mode, a, b] = process.argv.slice(2);
   const num = value => (value && value !== 'null' ? Number(value) : null);

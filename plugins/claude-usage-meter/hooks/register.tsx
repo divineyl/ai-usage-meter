@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Live, Overview, Session } from '../types'
+import type { AccountUsage, Overview, Session } from '../types'
 
 const PANE = 'claude-usage-meter'
 const HOUR = 3600 * 1000
@@ -43,20 +43,20 @@ function localMoney(n: number | null, s: Settings): string {
   return money(n, s.currency === 'CNY' ? '¥' : '$')
 }
 
-// A session's share of a window, estimated from API dollars: everything spent
-// inside the window moved it by `used` percent, so each percent cost spent/used.
-// Under 1% used the ratio is too noisy to show.
+// Estimated percent of an account window: sessionUsd × usedPercent / windowUsd.
+// Callers pass the session's lifetime API dollars (usdTotal), not inWindow.
+// Under 1% account usage the ratio is too noisy, so the share stays hidden.
 function share(usd: number, windowUsd: number | null | undefined, used: number | null | undefined): number | null {
   if (windowUsd == null || used == null || used < 1 || windowUsd <= 0) return null
   return usd / (windowUsd / used)
 }
 
-async function readLive($: EngineInterface): Promise<Live | null> {
+async function readLive($: EngineInterface): Promise<AccountUsage | null> {
   try {
     const usage = await $.session.usage()
     const pick = (kind: string) => usage.rateLimits.find(r => r.kind === kind)
     const five = pick('five_hour'), week = pick('seven_day')
-    return { engineUsd: usage.cost?.usd ?? null, fiveHourUsed: five?.percentUsed ?? null, weeklyUsed: week?.percentUsed ?? null,
+    return { fiveHourUsed: five?.percentUsed ?? null, weeklyUsed: week?.percentUsed ?? null,
       fiveHourResetsAt: five?.resetsAt ?? null, weeklyResetsAt: week?.resetsAt ?? null }
   } catch {
     return null
@@ -71,7 +71,7 @@ async function refresh($: EngineInterface): Promise<void> {
   const fresh = await readLive($)
   // A response without rate-limit headers reads as nulls; keep the last real reading.
   const { value: last } = await $.state.get(liveRef)
-  const live = fresh && (fresh.weeklyUsed !== null || !last) ? fresh : last ? { ...last, engineUsd: fresh?.engineUsd ?? last.engineUsd } : null
+  const live = fresh && (fresh.weeklyUsed !== null || !last) ? fresh : (last ?? null)
   if (live) await $.state.set(liveRef, live)
   if (isScanning) return
   isScanning = true

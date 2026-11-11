@@ -36,6 +36,15 @@ test('Haiku 5.5 prompts over 100K and fast mode cost more', () => {
   near(long.uncachedInput, short.uncachedInput * 5);
   const fast = priceResponse('claude-opus-5-5', usage(1e6, 0, 0, 0, 0, { speed: 'fast' })).usd;
   near(fast.uncachedInput, 8);
+  // The 5x long-prompt multiplier and the 2x fast multiplier stack.
+  const both = priceResponse('claude-haiku-5-5', usage(50000, 0, 0, 60000, 1000, { speed: 'fast' })).usd;
+  near(both.uncachedInput, short.uncachedInput * 10);
+});
+
+test('a non-string model counts its tokens but leaves its cost out', () => {
+  const { tokens, usd } = priceResponse(undefined, usage(10, 0, 0, 0, 5));
+  assert.equal(tokens.output, 5);
+  assert.equal(usd, null);
 });
 
 test('an unknown model counts its tokens but leaves its cost out', () => {

@@ -7,24 +7,30 @@ export type Session = {
   mtime: number
   subagents: number
   requests: number
+  // Requests whose model is not in the price table. Their tokens stay in `tokens`; their dollars do not.
   unpriced: number
   tokens: Categories
   usd: Categories
   total: number
+  // cacheRead / (cacheRead + cacheWrite + uncachedInput), or null when that input is 0.
   hitRate: number | null
   usdTotal: number
+  // API dollars at or after each window start passed to scanAll.
+  // scanAll uses [weekStart, fiveHourStart]; a single-session scan passes none, so this is [].
+  inWindow: number[]
 }
 
 export type Overview = {
   sessions: Session[]
-  // API $ of every session inside the account's current weekly and 5-hour windows.
+  // API $ of priced responses inside the account's current weekly and 5-hour windows.
+  // Summed from each session's inWindow, including sessions later hidden for having zero requests.
   weekUsd: number | null
   fiveUsd: number | null
   checkedAt: number
 }
 
-export type Live = {
-  engineUsd: number | null
+// Latest account rate limits reported by Claude Code. The "used" fields are percents already consumed.
+export type AccountUsage = {
   fiveHourUsed: number | null
   weeklyUsed: number | null
   fiveHourResetsAt: string | null
@@ -33,6 +39,6 @@ export type Live = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'claude-usage-meter': { overview: Overview; live: Live; sessionId: string; isCollapsed: boolean }
+    'claude-usage-meter': { overview: Overview; live: AccountUsage; sessionId: string; isCollapsed: boolean }
   }
 }
