@@ -56,7 +56,7 @@ claude plugin install claude-usage-meter@ai-usage-meter
 
 ### 怎么算的
 
-- **Token 和 API 费用**：逐条读 `~/.claude/projects` 下这个会话和它的子智能体的记录（同一个回复按 message id 去重），每次请求按它的模型单独计价：Opus 5.5 输入 $4、5 分钟缓存写入 $5、1 小时缓存写入 $8、缓存命中 $0.20、输出 $20（每百万 Token），Haiku 5.5 超过 10 万的输入 ×5，fast 模式 ×2。完整价格表在 [`scan.cjs`](plugins/claude-usage-meter/scan.cjs)。
+- **Token 和 API 费用**：逐条读 `~/.claude/projects` 下这个会话和它的子智能体的记录（同一个回复按 message id 去重），每次请求按它的模型单独计价：Opus 5.5 输入 $4、5 分钟缓存写入 $5、1 小时缓存写入 $8、缓存命中 $0.20、输出 $20（每百万 Token），Sonnet 5.5 缓存命中 $0.10，Haiku 5.5 超过 10 万的输入 ×5，fast 模式 ×2。完整价格表在 [`scan.cjs`](plugins/claude-usage-meter/scan.cjs)，对照 2026-11-11 的 [Anthropic 定价](https://platform.claude.com/docs/en/about-claude/pricing)。
 - **账号额度**：直接读 Claude Code 自己拿到的 5 小时 / 每周用量和重置时间。
 - **单个会话占多少额度**：Claude 没有"每个会话占多少额度"的官方数据，所以是估算：本周期里所有会话按 API 价格一共花了 X 美元、账号额度用了 Y%，于是每 1% ≈ X/Y 美元，再用这个会话自己的费用折算。网页版和手机 App 的用量也占同一份额度但不在本机记录里，会让估算偏高。
 
@@ -68,7 +68,7 @@ claude plugin install claude-usage-meter@ai-usage-meter
 - 对话顶部一栏：这个对话占 5 小时额度、占每周额度、已用额度（来自 Codex 官方的每对话用量接口，和设置里的"聊天用量排行"同源），累计 Token，缓存命中 / 未命中 / 输出，缓存命中率，**按 API 价格**的费用，以及**按周额度折算**的钱；
 - 原来左下角的账号 5 小时 / 每周剩余额度保留。
 
-API 费用逐个请求计算：用该请求所用模型的 OpenAI 标价（GPT-6.1 Sol 输入 $2 / 缓存 $0.10 / 输出 $10，GPT-6 Astra $10 / $1 / $50，GPT-6.1 Terra $1 / $0.05 / $5，GPT-6 Luna $0.10 / $0.01 / $0.50），单次输入超过 272K 的请求按长上下文价（输入 ×2、输出 ×1.5），含子智能体。
+API 费用逐个请求计算：用该请求所用模型的 OpenAI 标价（GPT-6.1 Sol 输入 $2 / 缓存 $0.10 / 输出 $10，GPT-6 Sol 缓存是 $0.20，GPT-6 Astra $10 / $1 / $50，GPT-6.1 Terra $1 / $0.05 / $5，GPT-6 Luna $0.10 / $0.01 / $0.50，另有 GPT-5.6 和更早的文本模型）。GPT-5.6 及以后的缓存写入，记录里没有分开时按 30 分钟档（输入 ×1.25）；分开标了 12 小时时按输入 ×2.5。单次输入超过 272K、且该模型有长上下文档时，按长上下文价（输入 ×2、输出 ×1.5），含子智能体。价格对照 2026-11-11 的 [OpenAI 定价](https://developers.openai.com/api/docs/pricing)。
 
 ### 安装
 
