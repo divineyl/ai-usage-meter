@@ -34,16 +34,27 @@ const cacheFile = () => process.env.USAGE_METER_CACHE || path.join(os.tmpdir(), 
 const FIELDS = ['cacheRead', 'cacheWrite', 'uncachedInput', 'output'];
 
 function priceFor(model) {
+  if (typeof model !== 'string' || !model) return null;
   if (PRICES[model]) return PRICES[model];
   const base = Object.keys(PRICES).find(id => model.startsWith(id + '-') || model.startsWith(id + '@'));
   return base ? PRICES[base] : null;
 }
 
+// Missing counters are zero. A present value that is not a finite, non-negative
+// number cannot be added: string concatenation would poison the session total.
+function count(value) {
+  if (value == null) return 0;
+  const n = typeof value === 'number' ? value : (typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
 // One response's tokens and USD per category, or null cost when the model has no price.
 function priceResponse(model, u) {
-  const write1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-  const write5m = u.cache_creation ? (u.cache_creation.ephemeral_5m_input_tokens ?? 0) : (u.cache_creation_input_tokens ?? 0);
-  const input = u.input_tokens ?? 0, read = u.cache_read_input_tokens ?? 0, output = u.output_tokens ?? 0;
+  const write1h = count(u.cache_creation?.ephemeral_1h_input_tokens);
+  const write5m = u.cache_creation ? count(u.cache_creation.ephemeral_5m_input_tokens) : count(u.cache_creation_input_tokens);
+  const input = count(u.input_tokens), read = count(u.cache_read_input_tokens), output = count(u.output_tokens);
+  if ([write1h, write5m, input, read, output].some(value => value === null)) return { tokens: null, usd: null };
   const tokens = { cacheRead: read, cacheWrite: write5m + write1h, uncachedInput: input, output };
   const price = priceFor(model);
   if (!price) return { tokens, usd: null };
@@ -98,8 +109,10 @@ function parseFile(file) {
   }
   const totals = empty(), times = [];
   for (const { t, model, usage } of byId.values()) {
-    const { tokens, usd } = priceResponse(model, usage);
+    const priced = priceResponse(model, usage);
     totals.requests++;
+    if (!priced?.tokens) { totals.unpriced++; continue; }
+    const { tokens, usd } = priced;
     for (const key of FIELDS) totals.tokens[key] += tokens[key];
     if (usd === null) { totals.unpriced++; continue; }
     let sum = 0;
@@ -126,10 +139,22 @@ function saveCache() {
 }
 
 // The session's transcript and its subagents' transcripts.
+function isFile(file) {
+  try { return fs.statSync(file).isFile(); } catch { return false; }
+}
 function sessionFiles(dir, id) {
-  const files = [path.join(dir, id + '.jsonl')];
+  const files = [];
+  const main = path.join(dir, id + '.jsonl');
+  if (isFile(main)) files.push(main);
   const subagents = path.join(dir, id, 'subagents');
-  if (fs.existsSync(subagents)) for (const name of fs.readdirSync(subagents)) if (name.endsWith('.jsonl')) files.push(path.join(subagents, name));
+  if (!fs.existsSync(subagents)) return files;
+  let names = [];
+  try { names = fs.readdirSync(subagents); } catch { return files; }
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue;
+    const full = path.join(subagents, name);
+    if (isFile(full)) files.push(full);
+  }
   return files;
 }
 
@@ -151,20 +176,29 @@ function summarize(id, dir, windows) {
 }
 
 function scan(sessionId) {
-  for (const project of fs.readdirSync(root())) {
+  let projects;
+  try { projects = fs.readdirSync(root()); } catch { return null; }
+  for (const project of projects) {
     const dir = path.join(root(), project);
-    if (fs.existsSync(path.join(dir, sessionId + '.jsonl'))) return summarize(sessionId, dir, []);
+    if (isFile(path.join(dir, sessionId + '.jsonl'))) return summarize(sessionId, dir, []);
   }
   return null;
 }
 
 function scanAll(weekStart, fiveStart) {
   const sessions = [];
-  for (const project of fs.readdirSync(root())) {
+  let projects;
+  try { projects = fs.readdirSync(root()); } catch { projects = []; }
+  for (const project of projects) {
     const dir = path.join(root(), project);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    for (const name of fs.readdirSync(dir)) {
+    let dirStat;
+    try { dirStat = fs.statSync(dir); } catch { continue; }
+    if (!dirStat.isDirectory()) continue;
+    let names;
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const name of names) {
       if (!name.endsWith('.jsonl')) continue;
+      if (!isFile(path.join(dir, name))) continue;
       sessions.push(summarize(name.slice(0, -6), dir, [weekStart, fiveStart]));
     }
   }
