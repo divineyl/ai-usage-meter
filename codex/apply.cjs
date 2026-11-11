@@ -48,7 +48,7 @@ function patchAgent(code) {
   const snapshot = reader.read(allIds);
   let perChatMetadata = [];
   try { perChatMetadata = readPerChatMetadata(allIds); } catch {}
-  for (const row of perChatMetadata) if (row.tokens != null) snapshot.totals[row.thread_id] = row.tokens + row.descendant_tokens;`);
+  for (const row of perChatMetadata) if (row.tokens != null && row.descendant_tokens != null) snapshot.totals[row.thread_id] = row.tokens + row.descendant_tokens;`);
   code = replaceOnce(code,
     'await session.evaluate(`window.__codexThreadTokens?.update(${JSON.stringify({ ...snapshot, totals })})`);',
     'await session.evaluate(`window.__codexThreadTokens?.update(${JSON.stringify({ ...snapshot, totals })});window.__codexPerChatUsage?.updateMetadata(${JSON.stringify(perChatMetadata.filter(row => ids.includes(row.thread_id)))},${JSON.stringify(readPerChatConfig())})`);');
