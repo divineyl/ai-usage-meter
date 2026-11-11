@@ -30,6 +30,13 @@ test('prices each category at Opus 5.5 rates, 5-minute and 1-hour writes apart',
   near(usd.uncachedInput, 4); near(usd.cacheWrite, 13); near(usd.cacheRead, 0.2); near(usd.output, 20);
 });
 
+test('Sonnet 5.5 cache hits are $0.10 per million tokens', () => {
+  // Official hit rate is 0.05x input. Sonnet 5 stays at 0.1x ($0.20).
+  const { usd } = priceResponse('claude-sonnet-5-5', usage(1e6, 1e6, 1e6, 1e6, 1e6));
+  near(usd.uncachedInput, 2); near(usd.cacheWrite, 6.5); near(usd.cacheRead, 0.1); near(usd.output, 10);
+  near(priceResponse('claude-sonnet-5', usage(0, 0, 0, 1e6, 0)).usd.cacheRead, 0.2);
+});
+
 test('Haiku 5.5 prompts over 100K and fast mode cost more', () => {
   const short = priceResponse('claude-haiku-5-5', usage(50000, 0, 0, 0, 1000)).usd;
   const long = priceResponse('claude-haiku-5-5', usage(50000, 0, 0, 60000, 1000)).usd;
