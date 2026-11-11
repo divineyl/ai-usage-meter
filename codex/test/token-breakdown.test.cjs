@@ -51,6 +51,25 @@ test('prices each request at its model and context tier, skipping repeated snaps
  fs.appendFileSync(file,usage(23e5,11e5,12e4,1e5));
  assert.ok(Math.abs(metadata.readApiCost(file,'gpt-6.1-sol').usd-2.74)<1e-9,'Appended requests are added incrementally');
 });
+function count(total,lastInput){return JSON.stringify({type:'event_msg',payload:{type:'token_count',info:{total_token_usage:total,last_token_usage:{input_tokens:lastInput??total.input_tokens}}}})+'\n';}
+function priced(model,body){const file=path.join(fixtures,`tier-${model}-${Math.random().toString(16).slice(2)}.jsonl`);fs.writeFileSync(file,context(model)+body);return metadata.readApiCost(file,model);}
+test('combined cache writes use the 30-minute rate, and a split bills 12-hour writes at 2.5x',()=>{
+ // 1K combined write on Sol, short context: 1.25 * $2.
+ const combined=priced('gpt-6.1-sol',count({input_tokens:1000,cached_input_tokens:0,cache_write_input_tokens:1000,output_tokens:0,total_tokens:1000}));
+ assert.ok(Math.abs(combined.usd-0.0025)<1e-9,String(combined.usd));
+ // The same 1K split into 12-hour writes: 2.5 * $2. The combined counter must not be added again.
+ const twelve=priced('gpt-6.1-sol',count({input_tokens:1000,cached_input_tokens:0,cache_write_input_tokens:1000,output_tokens:0,total_tokens:1000,cache_write_tokens_details:{ttl_30m_tokens:0,ttl_12h_tokens:1000}}));
+ assert.ok(Math.abs(twelve.usd-0.005)<1e-9,String(twelve.usd));
+ // 400 at 30 minutes and 600 at 12 hours.
+ const mixed=priced('gpt-6-astra',count({input_tokens:1000,cached_input_tokens:0,output_tokens:0,total_tokens:1000,input_tokens_details:{cache_write_tokens_details:{ttl_30m_tokens:400,ttl_12h_tokens:600}}}));
+ assert.ok(Math.abs(mixed.usd-(400*10*1.25+600*10*2.5)/1e6)<1e-9,String(mixed.usd));
+ // Long context still doubles the write. 300K of 12-hour writes on Astra is the published $50 rate.
+ const longWrite=priced('gpt-6-astra',count({input_tokens:300000,cached_input_tokens:0,output_tokens:0,total_tokens:300000,cache_write_tokens_details:{ttl_30m_tokens:0,ttl_12h_tokens:300000}},300000));
+ assert.ok(Math.abs(longWrite.usd-15)<1e-9,String(longWrite.usd));assert.equal(longWrite.longRequests,1);
+ // Undifferentiated long write on Sol stays at 1.25x, then the 2x long-context multiplier.
+ const legacy=priced('gpt-6.1-sol',count({input_tokens:300000,cached_input_tokens:100000,cache_write_input_tokens:50000,output_tokens:1000,total_tokens:301000},300000));
+ assert.ok(Math.abs(legacy.usd-0.885)<1e-9,String(legacy.usd));
+});
 test('an unknown model leaves the API cost unknown instead of zero',()=>{
  const file=path.join(fixtures,'unknown.jsonl');fs.writeFileSync(file,context('mystery-model')+usage(100,0,10,100));
  assert.equal(metadata.readApiCost(file,null),null);

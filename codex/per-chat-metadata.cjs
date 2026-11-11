@@ -41,20 +41,40 @@ function readTokenBreakdown(file) {
   } catch { return null; }
   finally { if (fd !== undefined) fs.closeSync(fd); }
 }
-// OpenAI API list prices, USD per 1M tokens (developers.openai.com, 2026-10-29).
-// Prompts over 272K input tokens: 2x input/cache, 1.5x output for the whole request.
+// OpenAI standard text rates, USD per 1M tokens. Checked 2026-11-11:
+// https://developers.openai.com/api/docs/pricing
+// https://developers.openai.com/api/docs/guides/prompt-caching
+// write30m and write12h multiply the input rate. GPT-5.6 and later charge 1.25x for a
+// 30-minute write and 2.5x for a 12-hour write. Earlier models have no write premium
+// (write30m 1, write12h null). A single cache_write_input_tokens count is the 30-minute
+// tier, which is the API default. ttl_30m_tokens and ttl_12h_tokens are billed apart
+// when a rollout records them. Prompts over 272K: 2x input/cache/writes and 1.5x output,
+// unless long is false.
 const PRICES = {
-  'gpt-6-astra': { input: 10, cached: 1, output: 50 },
-  'gpt-6.1-sol': { input: 2, cached: 0.1, output: 10 },
-  'gpt-6.1-terra': { input: 1, cached: 0.05, output: 5 },
-  'gpt-6-luna': { input: 0.1, cached: 0.01, output: 0.5 }
+  'gpt-6-astra': { input: 10, cached: 1, output: 50, write30m: 1.25, write12h: 2.5 },
+  'gpt-6.1-sol': { input: 2, cached: 0.1, output: 10, write30m: 1.25, write12h: 2.5 },
+  'gpt-6.1-terra': { input: 1, cached: 0.05, output: 5, write30m: 1.25, write12h: 2.5 },
+  'gpt-6-luna': { input: 0.1, cached: 0.01, output: 0.5, write30m: 1.25, write12h: 2.5 }
 };
 const LONG_CONTEXT = 272000, CACHE_WRITE = 1.25;
 const costCache = new Map();
 function requestCost(price, delta, promptInput) {
-  const long = promptInput > LONG_CONTEXT, inRate = long ? 2 : 1, outRate = long ? 1.5 : 1;
-  const write = Math.min(delta.write, delta.input - delta.cached);
-  return ((delta.cached * price.cached + (delta.input - delta.cached - write) * price.input + write * price.input * CACHE_WRITE) * inRate
+  const long = price.long !== false && promptInput > LONG_CONTEXT, inRate = long ? 2 : 1, outRate = long ? 1.5 : 1;
+  if (delta.cached > 0 && !(price.cached >= 0)) return null;
+  const cachedPrice = price.cached ?? 0;
+  let write30, write12;
+  if (delta.write30m != null || delta.write12h != null) {
+    const room = Math.max(0, delta.input - delta.cached);
+    write12 = Math.min(Math.max(0, delta.write12h ?? 0), room);
+    write30 = Math.min(Math.max(0, delta.write30m ?? 0), room - write12);
+    if (write12 > 0 && !(price.write12h > 0)) return null;
+  } else {
+    write30 = Math.min(delta.write, delta.input - delta.cached);
+    write12 = 0;
+  }
+  const rate30 = price.write30m ?? CACHE_WRITE, rate12 = price.write12h > 0 ? price.write12h : 0;
+  return ((delta.cached * cachedPrice + (delta.input - delta.cached - write30 - write12) * price.input
+    + write30 * price.input * rate30 + write12 * price.input * rate12) * inRate
     + delta.output * price.output * outRate) / 1e6;
 }
 // Sums every request in a rollout at its own model and context tier; appended bytes are parsed incrementally.
@@ -83,17 +103,28 @@ function readApiCost(file, fallbackModel) {
         if (payload.type !== 'token_count') continue;
         const total = payload.info?.total_token_usage, last = payload.info?.last_token_usage;
         if (!total) continue;
-        const now = { input: total.input_tokens ?? 0, cached: total.cached_input_tokens ?? 0, write: total.cache_write_input_tokens ?? 0, output: total.output_tokens ?? 0 };
-        const prev = state.last && now.input >= state.last.input && now.output >= state.last.output ? state.last : { input: 0, cached: 0, write: 0, output: 0 };
-        const delta = { input: now.input - prev.input, cached: Math.max(0, now.cached - prev.cached), write: Math.max(0, now.write - prev.write), output: now.output - prev.output };
+        const details = total.cache_write_tokens_details || total.input_tokens_details?.cache_write_tokens_details;
+        const split = details && typeof details === 'object' ? details
+          : (total.cache_write_30m_input_tokens != null || total.cache_write_12h_input_tokens != null
+            ? { ttl_30m_tokens: total.cache_write_30m_input_tokens ?? 0, ttl_12h_tokens: total.cache_write_12h_input_tokens ?? 0 }
+            : null);
+        const now = { input: total.input_tokens ?? 0, cached: total.cached_input_tokens ?? 0, write: total.cache_write_input_tokens ?? 0,
+          write30m: split ? (split.ttl_30m_tokens ?? 0) : null, write12h: split ? (split.ttl_12h_tokens ?? 0) : null, output: total.output_tokens ?? 0 };
+        const prev = state.last && now.input >= state.last.input && now.output >= state.last.output ? state.last : { input: 0, cached: 0, write: 0, output: 0, write30m: 0, write12h: 0 };
+        const delta = { input: now.input - prev.input, cached: Math.max(0, now.cached - prev.cached), write: Math.max(0, now.write - prev.write),
+          write30m: now.write30m == null ? null : Math.max(0, now.write30m - (prev.write30m ?? 0)),
+          write12h: now.write12h == null ? null : Math.max(0, now.write12h - (prev.write12h ?? 0)),
+          output: now.output - prev.output };
         state.last = now;
         if (!delta.input && !delta.output) continue;
         delta.cached = Math.min(delta.cached, delta.input);
         const price = PRICES[state.model];
         if (!price) { state.unknown = true; continue; }
         const promptInput = last?.input_tokens ?? delta.input;
-        if (promptInput > LONG_CONTEXT) state.longRequests++;
-        state.usd += requestCost(price, delta, promptInput);
+        if (promptInput > LONG_CONTEXT && price.long !== false) state.longRequests++;
+        const usd = requestCost(price, delta, promptInput);
+        if (usd == null || !Number.isFinite(usd)) { state.unknown = true; continue; }
+        state.usd += usd;
       }
     }
     if (costCache.size >= 1024 && !costCache.has(file)) costCache.delete(costCache.keys().next().value);
