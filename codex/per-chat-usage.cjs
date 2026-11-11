@@ -3,10 +3,10 @@ const { readMetadata, readConfig } = require('./per-chat-metadata.cjs');
 
 function installPerChatUsage() {
   const KEY = '__codexPerChatUsage';
-  if (window[KEY]?.version === 6) { window[KEY].refresh(); return; }
+  if (window[KEY]?.version === 7) { window[KEY].refresh(); return; }
   window[KEY]?.destroy?.();
   const ROW = '[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-id]';
-  let metadata = new Map(), usage = new Map(), checkedAt = null;
+  let metadata = new Map(), usage = new Map(), checkedAt = null, usageError = null;
   let disposed = false, pending = false, nextFetch = 0, refreshTimer = null;
   const panel = document.createElement('section');
   panel.id = 'codex-per-chat-usage';
@@ -20,8 +20,7 @@ function installPerChatUsage() {
   tokenGrid.className = 'codex-chat-usage-grid codex-chat-token-breakdown';
   const costGrid = document.createElement('div');
   costGrid.className = 'codex-chat-usage-grid codex-chat-token-breakdown';
-  // Weekly allowance valued at ¥140 per 4 weeks; API prices are USD.
-  // Settings arrive with each metadata update (per-chat-usage.config.json beside agent.cjs).
+  // Same defaults as DEFAULT_CONFIG. updateMetadata replaces them from per-chat-usage.config.json.
   let config = { monthlyPrice: 140, weeksPerMonth: 4, currency: 'CNY', usdToCny: 6.8 };
   const weeklyValue = () => config.monthlyPrice / config.weeksPerMonth;
   const symbol = () => (config.currency === 'USD' ? '$' : '¥');
@@ -104,9 +103,9 @@ function installPerChatUsage() {
       setText(cells.hitRate,value.breakdown?.hitRate == null ? '—' : new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:2}).format(value.breakdown.hitRate));
       setData(panel,'hitRate',value.breakdown?.hitRate);
       setText(cells.apiCost, apiCostText(value.apiCost?.usd));
-      setText(cells.weeklyCost, money(weeklyCost(value.weekly), '¥'));
-      setData(panel, 'apiCostUsd', value.apiCost?.usd); setData(panel, 'weeklyCostCny', weeklyCost(value.weekly));
-      const costDetail = `按 API 价格：每次请求按其模型的 OpenAI API 标价分别计算（缓存命中输入、未命中输入、输出），单次输入超过 272K 的请求按长上下文价格（输入×2、输出×1.5），含子智能体。本聊天有 ${value.apiCost?.longRequests ?? '—'} 次长上下文请求。人民币按 1 美元 ≈ ${config.usdToCny} 元换算。
+      setText(cells.weeklyCost, money(weeklyCost(value.weekly), symbol()));
+      setData(panel, 'apiCostUsd', value.apiCost?.usd); setData(panel, 'weeklyCost', weeklyCost(value.weekly));
+      const costDetail = `按 API 价格：每次请求用当时模型的 OpenAI 标价（缓存命中、未命中输入、输出）。缓存写入按输入价的 1.25 倍，并且不超过这次未命中的输入。单次输入超过 272K 时，整段输入（含缓存命中和缓存写入）×2，输出×1.5。模型不在价格表里时，这份记录不计 API 费用。含子智能体。本聊天有 ${value.apiCost?.longRequests ?? '—'} 次长上下文请求。显示人民币时按 1 美元 ≈ ${config.usdToCny} 元。
 按周额度折算：占每周额度 × ${symbol()}${weeklyValue()}（月费 ${symbol()}${config.monthlyPrice} ÷ ${config.weeksPerMonth} 周）。`;
       if (costGrid.title !== costDetail) costGrid.title = costDetail;
       const tokenDetail = '缓存命中输入 + 未命中输入 + 输出 Token = 累计 Token。缓存命中率按输入 Token 计算。输出包含推理 Token，不重复累计。缺少完整会话记录时显示 —。';
@@ -114,7 +113,7 @@ function installPerChatUsage() {
       setData(panel, 'fiveHour', value.fiveHour); setData(panel, 'weekly', value.weekly);
       setData(panel, 'credits', value.credits); setData(panel, 'tokens', value.tokens);
       setData(panel, 'state', value.ready ? 'ready' : pending ? 'loading' : 'unavailable');
-      const detail = `本聊天累计消耗，含子智能体。百分比与设置中的聊天用量排行使用同一接口，可超过 100%。\n数据截至：${checkedAt ? new Date(checkedAt).toLocaleString() : '尚无可用记录'}。\n— 表示数据暂不可用，不代表 0。`;
+      const detail = `本聊天累计消耗，含子智能体。百分比与设置中的聊天用量排行使用同一接口，可超过 100%。\n数据截至：${checkedAt ? new Date(checkedAt).toLocaleString() : '尚无可用记录'}。\n— 表示数据暂不可用，不代表 0。${usageError ? `\n原因：${usageError}` : ''}`;
       if (panel.title !== detail) panel.title = detail;
     } else panel.hidden = true;
     for (const badge of document.querySelectorAll('[data-codex-thread-tokens]')) {
@@ -124,7 +123,7 @@ function installPerChatUsage() {
       setData(badge, 'fiveHour', value.fiveHour); setData(badge, 'weekly', value.weekly); setData(badge, 'credits', value.credits);
       const detail = `本聊天累计（含子智能体）\n占 5 小时额度：${percent(value.fiveHour)}\n占每周额度：${percent(value.weekly)}\n已用额度：${value.credits == null ? '—' : value.credits}\nToken：${tokenText(value.tokens)}\n缓存命中输入：${tokenText(value.breakdown?.cachedInput)}\n未命中输入：${tokenText(value.breakdown?.uncachedInput)}\n输出 Token：${tokenText(value.breakdown?.output)}
 按 API 价格：${apiCostText(value.apiCost?.usd)}
-按周额度折算：${money(weeklyCost(value.weekly), '¥')}`;
+按周额度折算：${money(weeklyCost(value.weekly), symbol())}`;
       if (badge.title !== detail) badge.title = detail;
     }
   }
@@ -152,6 +151,7 @@ function installPerChatUsage() {
       const module = await import(resource);
       // The bundle's export names are minified and change between Codex releases:
       // find the API client by its safePost method rather than by name.
+      // 0.10.1 builds that client lazily behind this initializer; a later build can omit it.
       module.sRr?.();
       const client = typeof module.iRr?.safePost === 'function' ? module.iRr
         : Object.values(module).find(value => value && typeof value === 'object' && typeof value.safePost === 'function');
@@ -163,9 +163,10 @@ function installPerChatUsage() {
         for (const row of data.threads ?? []) if (metadata.has(row.thread_id)) next.set(row.thread_id, row);
         if (data.data_as_of) asOf.push(data.data_as_of);
       }
-      usage = next; checkedAt = asOf.sort()[0] ?? null;
-    } catch {
+      usage = next; checkedAt = asOf.sort()[0] ?? null; usageError = null;
+    } catch (error) {
       usage = new Map(); checkedAt = null;
+      usageError = error instanceof Error ? error.message : 'Usage request failed';
     } finally { pending = false; if (!disposed) refresh(); }
   }
   function scheduleRefresh() {
@@ -178,7 +179,7 @@ function installPerChatUsage() {
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
     attributeFilter: ['data-app-action-sidebar-thread-selected', 'data-app-action-sidebar-thread-id'] });
   const poll = setInterval(() => { refresh(); fetchUsage(); }, 15000);
-  window[KEY] = { version: 6, refresh,
+  window[KEY] = { version: 7, refresh,
     updateMetadata(rows, settings) {
       if (settings && typeof settings === 'object') config = { ...config, ...settings };
       const next = new Map((Array.isArray(rows) ? rows : []).filter(row => typeof row?.thread_id === 'string').map(row => [row.thread_id, row]));

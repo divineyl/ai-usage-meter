@@ -1,6 +1,7 @@
 'use strict';
 // Sums Claude Code sessions' token usage (subagents included) from the transcripts
-// under ~/.claude/projects and prices it at Anthropic API list prices.
+// under CLAUDE_CONFIG_DIR/projects, or ~/.claude/projects when that is unset,
+// and prices it at Anthropic API list prices.
 //   node scan.cjs <sessionId>                    -> that session
 //   node scan.cjs --all <weekStartMs> <fiveStartMs> -> every session, plus API $ inside each window
 // Each transcript's parse is cached by size and mtime in the system temp folder.
@@ -26,15 +27,24 @@ const PRICES = {
   'claude-haiku-5-5': [0.1, 0.125, 0.2, 0.01, 0.5],
   'claude-haiku-4-5': [1, 1.25, 2, 0.1, 5]
 };
-// Haiku 5.5 prompts over 100K tokens cost 5x; fast mode (Opus) costs 2x.
+// Haiku 5.5 costs 5x when input + cache read + cache writes exceed 100K tokens.
+// usage.speed === 'fast' doubles that price again, whichever model sent the request.
 const HAIKU_LONG = 100000;
 // Claude Code keeps its data under CLAUDE_CONFIG_DIR when set, else ~/.claude.
-const root = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+const root = () => {
+  const dir = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Claude session folder not found: ${dir}. Set CLAUDE_CONFIG_DIR if transcripts live elsewhere, or open Claude Code once so ~/.claude/projects exists.`);
+  }
+  return dir;
+};
 const cacheFile = () => process.env.USAGE_METER_CACHE || path.join(os.tmpdir(), 'claude-usage-meter-cache-v1.json');
 const FIELDS = ['cacheRead', 'cacheWrite', 'uncachedInput', 'output'];
 
 function priceFor(model) {
+  if (typeof model !== 'string') return null;
   if (PRICES[model]) return PRICES[model];
+  // Dated snapshots (…-20260101 or …@20260101) use the longest listed id that is a prefix.
   const base = Object.keys(PRICES).find(id => model.startsWith(id + '-') || model.startsWith(id + '@'));
   return base ? PRICES[base] : null;
 }
@@ -57,11 +67,6 @@ function priceResponse(model, u) {
     output: scale * output * price[4] / 1e6
   };
   return { tokens, usd };
-}
-
-function requestCost(model, u) {
-  const { usd } = priceResponse(model, u);
-  return usd && FIELDS.reduce((sum, key) => sum + usd[key], 0);
 }
 
 function empty() {
@@ -122,7 +127,8 @@ function cached(file) {
 }
 function saveCache() {
   if (!cacheChanged) return;
-  try { fs.writeFileSync(cacheFile(), JSON.stringify(cache)); } catch {}
+  try { fs.writeFileSync(cacheFile(), JSON.stringify(cache)); }
+  catch (error) { console.error(`Could not write usage cache ${cacheFile()}: ${error.message}`); }
 }
 
 // The session's transcript and its subagents' transcripts.
@@ -176,11 +182,22 @@ function scanAll(weekStart, fiveStart) {
   };
 }
 
-module.exports = { scan, scanAll, requestCost, priceResponse, saveCache, PRICES };
+module.exports = { scan, scanAll, priceResponse, saveCache, PRICES };
 if (require.main === module) {
-  const [mode, a, b] = process.argv.slice(2);
-  const num = value => (value && value !== 'null' ? Number(value) : null);
-  const result = mode === '--all' ? scanAll(num(a), num(b)) : scan(mode ?? '');
-  saveCache();
-  process.stdout.write(JSON.stringify(result));
+  try {
+    const [mode, a, b] = process.argv.slice(2);
+    if (!mode) {
+      console.error('Usage: node scan.cjs <sessionId>');
+      console.error('       node scan.cjs --all <weekStartMs|null> <fiveStartMs|null>');
+      process.exitCode = 1;
+    } else {
+      const num = value => (value && value !== 'null' ? Number(value) : null);
+      const result = mode === '--all' ? scanAll(num(a), num(b)) : scan(mode);
+      saveCache();
+      process.stdout.write(JSON.stringify(result));
+    }
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

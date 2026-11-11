@@ -60,4 +60,17 @@ test('settings fall back to defaults and ignore invalid values',()=>{
  assert.deepEqual(metadata.readConfig(dir),metadata.DEFAULT_CONFIG);
  fs.writeFileSync(path.join(dir,'per-chat-usage.config.json'),JSON.stringify({monthlyPrice:20,currency:'USD',weeksPerMonth:-1,usdToCny:'x'}));
  assert.deepEqual(metadata.readConfig(dir),{...metadata.DEFAULT_CONFIG,monthlyPrice:20,currency:'USD'});
+ fs.writeFileSync(path.join(dir,'per-chat-usage.config.json'),JSON.stringify({currency:'usd'}));
+ assert.equal(metadata.readConfig(dir).currency,'USD');
+});
+test('invalid settings JSON keeps defaults and reports the file',()=>{
+ const dir=fs.mkdtempSync(path.join(fixtures,'config-bad-'));
+ fs.writeFileSync(path.join(dir,'per-chat-usage.config.json'),'{');
+ const errors=[];
+ const write=console.error;
+ console.error=(...args)=>errors.push(args.join(' '));
+ try {
+  assert.deepEqual(metadata.readConfig(dir),metadata.DEFAULT_CONFIG);
+  assert.match(errors.join('\n'),/invalid JSON/);
+ } finally { console.error=write; }
 });

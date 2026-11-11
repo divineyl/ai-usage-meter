@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Live, Overview, Session } from '../types'
+import type { AccountUsage, Overview, Session } from '../types'
 
 const PANE = 'claude-usage-meter'
 const HOUR = 3600 * 1000
@@ -10,6 +10,7 @@ const liveRef = { plugin: 'claude-usage-meter', key: 'live' } as const
 const sessionIdRef = { plugin: 'claude-usage-meter', key: 'sessionId' } as const
 // Whether the strip shows one line; kept in $.store too so new sessions open the same way.
 const collapsedRef = { plugin: 'claude-usage-meter', key: 'isCollapsed' } as const
+const scanErrorRef = { plugin: 'claude-usage-meter', key: 'scanError' } as const
 const COLLAPSED_KEY = 'isCollapsed'
 
 // The userConfig fields, defaults filled in; see .claude-plugin/plugin.json.
@@ -43,20 +44,20 @@ function localMoney(n: number | null, s: Settings): string {
   return money(n, s.currency === 'CNY' ? '¥' : '$')
 }
 
-// A session's share of a window, estimated from API dollars: everything spent
-// inside the window moved it by `used` percent, so each percent cost spent/used.
-// Under 1% used the ratio is too noisy to show.
+// Estimated percent of an account window: sessionUsd × usedPercent / windowUsd.
+// Callers pass the session's lifetime API dollars (usdTotal), not inWindow.
+// Under 1% account usage the ratio is too noisy, so the share stays hidden.
 function share(usd: number, windowUsd: number | null | undefined, used: number | null | undefined): number | null {
   if (windowUsd == null || used == null || used < 1 || windowUsd <= 0) return null
   return usd / (windowUsd / used)
 }
 
-async function readLive($: EngineInterface): Promise<Live | null> {
+async function readLive($: EngineInterface): Promise<AccountUsage | null> {
   try {
     const usage = await $.session.usage()
     const pick = (kind: string) => usage.rateLimits.find(r => r.kind === kind)
     const five = pick('five_hour'), week = pick('seven_day')
-    return { engineUsd: usage.cost?.usd ?? null, fiveHourUsed: five?.percentUsed ?? null, weeklyUsed: week?.percentUsed ?? null,
+    return { fiveHourUsed: five?.percentUsed ?? null, weeklyUsed: week?.percentUsed ?? null,
       fiveHourResetsAt: five?.resetsAt ?? null, weeklyResetsAt: week?.resetsAt ?? null }
   } catch {
     return null
@@ -71,23 +72,35 @@ async function refresh($: EngineInterface): Promise<void> {
   const fresh = await readLive($)
   // A response without rate-limit headers reads as nulls; keep the last real reading.
   const { value: last } = await $.state.get(liveRef)
-  const live = fresh && (fresh.weeklyUsed !== null || !last) ? fresh : last ? { ...last, engineUsd: fresh?.engineUsd ?? last.engineUsd } : null
+  const live = fresh && (fresh.weeklyUsed !== null || !last) ? fresh : (last ?? null)
   if (live) await $.state.set(liveRef, live)
   if (isScanning) return
   isScanning = true
   try {
     const id = await $.session.id()
     await $.state.set(sessionIdRef, id)
-    const weekStart = live?.weeklyResetsAt ? Date.parse(live.weeklyResetsAt) - 7 * 24 * HOUR : null
-    const fiveStart = live?.fiveHourResetsAt ? Date.parse(live.fiveHourResetsAt) - 5 * HOUR : null
+    const weekEnd = live?.weeklyResetsAt ? Date.parse(live.weeklyResetsAt) : Number.NaN
+    const fiveEnd = live?.fiveHourResetsAt ? Date.parse(live.fiveHourResetsAt) : Number.NaN
+    // An unparseable reset time is "no window", not a zero-dollar window.
+    const weekStart = Number.isFinite(weekEnd) ? weekEnd - 7 * 24 * HOUR : null
+    const fiveStart = Number.isFinite(fiveEnd) ? fiveEnd - 5 * HOUR : null
     const ran = await $.process.run(['node', `${$.plugin.root}/scan.cjs`, '--all', String(weekStart), String(fiveStart)], { timeoutMs: 120000 })
-    if (ran.exitCode !== 0) return
+    if (ran.exitCode !== 0) {
+      const stderr = (ran as { stderr?: unknown }).stderr
+      const line = typeof stderr === 'string' ? stderr.replace(/\s+/g, ' ').trim() : ''
+      const shown = line.length > 300 ? `${line.slice(0, 300)}…` : line
+      await $.state.set(scanErrorRef, shown || `scan.cjs 退出码 ${ran.exitCode}`)
+      return
+    }
     const scanned = JSON.parse(ran.stdout) as Omit<Overview, 'checkedAt'>
     await $.state.set(overviewRef, { ...scanned, checkedAt: await $.clock.now() })
+    await $.state.set(scanErrorRef, null)
     const mine = scanned.sessions.find(s => s.id === id)
     if (mine) $.ui.status(`本会话 ${money(mine.usdTotal, '$')}`)
-  } catch {
+  } catch (error) {
     // Keep the last scan; the next turn tries again.
+    const message = error instanceof Error ? error.message : '读取会话记录失败'
+    try { await $.state.set(scanErrorRef, message) } catch { /* state itself failed */ }
   } finally {
     isScanning = false
   }
@@ -188,7 +201,8 @@ export const register: Register = (on, options) => {
     const { value: overview } = await $.state.get(overviewRef)
     const { value: live } = await $.state.get(liveRef)
     const { value: id } = await $.state.get(sessionIdRef)
-    if (!overview) return <Text dimColor>正在读取会话记录…</Text>
+    const { value: scanError } = await $.state.get(scanErrorRef)
+    if (!overview) return <Text dimColor>{scanError ? `读取会话记录失败：${scanError}` : '正在读取会话记录…'}</Text>
     const room = Math.max(3, (e.viewport?.rows ?? 30) - 6)
     const perWeek = overview.weekUsd != null && live?.weeklyUsed ? overview.weekUsd / live.weeklyUsed * 100 : null
 
@@ -207,6 +221,7 @@ export const register: Register = (on, options) => {
           本周期所有会话按 API 价格共 {money(overview.weekUsd, '$')}，账号每周额度已用 {percent(live?.weeklyUsed)}，
           用满约值 {money(perWeek, '$')}。各会话的占比按 API 费用折算，不含网页版和手机 App 的用量。
         </Text>
+        {scanError ? <Text dimColor>最近一次读取失败：{scanError}</Text> : null}
       </Box>
     )
   })
