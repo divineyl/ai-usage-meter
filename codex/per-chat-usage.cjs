@@ -75,7 +75,7 @@ function installPerChatUsage() {
     return { fiveHour: ready ? number(entry.five_hour_limit_percent) : null,
       weekly: ready ? number(entry.weekly_limit_percent) : null,
       credits: ready ? number(entry.balance_usage_credits) : null,
-      tokens: meta?.tokens == null ? null : meta.tokens + meta.descendant_tokens,
+      tokens: meta?.tokens == null || meta?.descendant_tokens == null ? null : meta.tokens + meta.descendant_tokens,
       breakdown: meta?.breakdown ?? null,
       apiCost: meta?.apiCost ?? null,
       descendants: meta?.descendant_thread_ids?.length ?? 0, ready };
@@ -104,7 +104,7 @@ function installPerChatUsage() {
       setText(cells.hitRate,value.breakdown?.hitRate == null ? '—' : new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:2}).format(value.breakdown.hitRate));
       setData(panel,'hitRate',value.breakdown?.hitRate);
       setText(cells.apiCost, apiCostText(value.apiCost?.usd));
-      setText(cells.weeklyCost, money(weeklyCost(value.weekly), '¥'));
+      setText(cells.weeklyCost, money(weeklyCost(value.weekly), symbol()));
       setData(panel, 'apiCostUsd', value.apiCost?.usd); setData(panel, 'weeklyCostCny', weeklyCost(value.weekly));
       const costDetail = `按 API 价格：每次请求按其模型的 OpenAI API 标价分别计算（缓存命中输入、未命中输入、输出），单次输入超过 272K 的请求按长上下文价格（输入×2、输出×1.5），含子智能体。本聊天有 ${value.apiCost?.longRequests ?? '—'} 次长上下文请求。人民币按 1 美元 ≈ ${config.usdToCny} 元换算。
 按周额度折算：占每周额度 × ${symbol()}${weeklyValue()}（月费 ${symbol()}${config.monthlyPrice} ÷ ${config.weeksPerMonth} 周）。`;
@@ -124,20 +124,21 @@ function installPerChatUsage() {
       setData(badge, 'fiveHour', value.fiveHour); setData(badge, 'weekly', value.weekly); setData(badge, 'credits', value.credits);
       const detail = `本聊天累计（含子智能体）\n占 5 小时额度：${percent(value.fiveHour)}\n占每周额度：${percent(value.weekly)}\n已用额度：${value.credits == null ? '—' : value.credits}\nToken：${tokenText(value.tokens)}\n缓存命中输入：${tokenText(value.breakdown?.cachedInput)}\n未命中输入：${tokenText(value.breakdown?.uncachedInput)}\n输出 Token：${tokenText(value.breakdown?.output)}
 按 API 价格：${apiCostText(value.apiCost?.usd)}
-按周额度折算：${money(weeklyCost(value.weekly), '¥')}`;
+按周额度折算：${money(weeklyCost(value.weekly), symbol())}`;
       if (badge.title !== detail) badge.title = detail;
     }
   }
   function batches() {
     const output = []; let batch = [], seen = new Set(), size = 0;
     for (const meta of metadata.values()) {
-      const ids = [meta.thread_id, ...meta.descendant_thread_ids];
+      const descendants = Array.isArray(meta.descendant_thread_ids) ? meta.descendant_thread_ids : [];
+      const ids = [meta.thread_id, ...descendants];
       if (ids.length >= 1000) continue;
       if (batch.length >= 100 || size + ids.length > 1000 || ids.some(id => seen.has(id))) {
         if (batch.length) output.push(batch);
         batch = []; seen = new Set(); size = 0;
       }
-      batch.push({ thread_id: meta.thread_id, created_at: meta.created_at, descendant_thread_ids: meta.descendant_thread_ids });
+      batch.push({ thread_id: meta.thread_id, created_at: meta.created_at, descendant_thread_ids: descendants });
       ids.forEach(id => seen.add(id)); size += ids.length;
     }
     if (batch.length) output.push(batch);
@@ -150,6 +151,7 @@ function installPerChatUsage() {
       const resource = performance.getEntriesByType('resource').map(entry => entry.name).find(url => /\/assets\/app-initial-[a-f0-9]+\.js(?:\?|$)/.test(url));
       if (!resource) throw new Error('Codex app bundle not found');
       const module = await import(resource);
+      if (disposed) return;
       // The bundle's export names are minified and change between Codex releases:
       // find the API client by its safePost method rather than by name.
       module.sRr?.();
@@ -158,6 +160,7 @@ function installPerChatUsage() {
       if (!client) throw new Error('Usage client unavailable');
       const next = new Map(), asOf = [];
       for (const threads of batches()) {
+        if (disposed) return;
         const data = await client.safePost('/wham/usage/thread_usage/query_v2', { requestBody: { threads } });
         if (disposed) return;
         for (const row of data.threads ?? []) if (metadata.has(row.thread_id)) next.set(row.thread_id, row);
@@ -182,7 +185,15 @@ function installPerChatUsage() {
     updateMetadata(rows, settings) {
       if (settings && typeof settings === 'object') config = { ...config, ...settings };
       const next = new Map((Array.isArray(rows) ? rows : []).filter(row => typeof row?.thread_id === 'string').map(row => [row.thread_id, row]));
-      const changed = [...next.keys()].some(id => !metadata.has(id));
+      const sameList = (left, right) => {
+        const a = Array.isArray(left) ? left : [], b = Array.isArray(right) ? right : [];
+        return a.length === b.length && a.every((id, index) => id === b[index]);
+      };
+      // A new subagent changes the quota query, so it cannot wait out the throttle.
+      const changed = [...next].some(([id, row]) => {
+        const prev = metadata.get(id);
+        return !prev || prev.created_at !== row.created_at || !sameList(prev.descendant_thread_ids, row.descendant_thread_ids);
+      });
       metadata = next; if (changed) nextFetch = 0;
       refresh(); fetchUsage();
     },
