@@ -1,6 +1,7 @@
 'use strict';
 // Sums Claude Code sessions' token usage (subagents included) from the transcripts
-// under ~/.claude/projects and prices it at Anthropic API list prices.
+// under CLAUDE_CONFIG_DIR/projects, or ~/.claude/projects when that is unset,
+// and prices it at Anthropic API list prices.
 //   node scan.cjs <sessionId>                    -> that session
 //   node scan.cjs --all <weekStartMs> <fiveStartMs> -> every session, plus API $ inside each window
 // Each transcript's parse is cached by size and mtime in the system temp folder.
@@ -30,7 +31,13 @@ const PRICES = {
 // usage.speed === 'fast' doubles that price again, whichever model sent the request.
 const HAIKU_LONG = 100000;
 // Claude Code keeps its data under CLAUDE_CONFIG_DIR when set, else ~/.claude.
-const root = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+const root = () => {
+  const dir = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Claude session folder not found: ${dir}. Set CLAUDE_CONFIG_DIR if transcripts live elsewhere, or open Claude Code once so ~/.claude/projects exists.`);
+  }
+  return dir;
+};
 const cacheFile = () => process.env.USAGE_METER_CACHE || path.join(os.tmpdir(), 'claude-usage-meter-cache-v1.json');
 const FIELDS = ['cacheRead', 'cacheWrite', 'uncachedInput', 'output'];
 
@@ -120,7 +127,8 @@ function cached(file) {
 }
 function saveCache() {
   if (!cacheChanged) return;
-  try { fs.writeFileSync(cacheFile(), JSON.stringify(cache)); } catch {}
+  try { fs.writeFileSync(cacheFile(), JSON.stringify(cache)); }
+  catch (error) { console.error(`Could not write usage cache ${cacheFile()}: ${error.message}`); }
 }
 
 // The session's transcript and its subagents' transcripts.
@@ -176,9 +184,20 @@ function scanAll(weekStart, fiveStart) {
 
 module.exports = { scan, scanAll, priceResponse, saveCache, PRICES };
 if (require.main === module) {
-  const [mode, a, b] = process.argv.slice(2);
-  const num = value => (value && value !== 'null' ? Number(value) : null);
-  const result = mode === '--all' ? scanAll(num(a), num(b)) : scan(mode ?? '');
-  saveCache();
-  process.stdout.write(JSON.stringify(result));
+  try {
+    const [mode, a, b] = process.argv.slice(2);
+    if (!mode) {
+      console.error('Usage: node scan.cjs <sessionId>');
+      console.error('       node scan.cjs --all <weekStartMs|null> <fiveStartMs|null>');
+      process.exitCode = 1;
+    } else {
+      const num = value => (value && value !== 'null' ? Number(value) : null);
+      const result = mode === '--all' ? scanAll(num(a), num(b)) : scan(mode);
+      saveCache();
+      process.stdout.write(JSON.stringify(result));
+    }
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }

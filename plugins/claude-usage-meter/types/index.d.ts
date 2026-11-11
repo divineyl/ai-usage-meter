@@ -39,6 +39,13 @@ export type AccountUsage = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'claude-usage-meter': { overview: Overview; live: AccountUsage; sessionId: string; isCollapsed: boolean }
+    'claude-usage-meter': {
+      overview: Overview
+      live: AccountUsage
+      sessionId: string
+      isCollapsed: boolean
+      // Last scan.cjs failure, or null after a scan that wrote overview.
+      scanError: string | null
+    }
   }
 }

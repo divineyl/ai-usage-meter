@@ -144,10 +144,19 @@ function readMetadata(ids, home = process.env.CODEX_HOME || path.join(require('n
   } finally { db.close(); }
 }
 // Display settings from per-chat-usage.config.json beside this file; defaults when absent or invalid.
+// Keep the numbers in sync with plugin.json userConfig and the fallback in per-chat-usage.cjs.
 const DEFAULT_CONFIG = { monthlyPrice: 140, weeksPerMonth: 4, currency: 'CNY', usdToCny: 6.8 };
 function readConfig(dir = __dirname) {
+  const file = path.join(dir, 'per-chat-usage.config.json');
   let saved = {};
-  try { saved = JSON.parse(fs.readFileSync(path.join(dir, 'per-chat-usage.config.json'), 'utf8')); } catch {}
+  if (fs.existsSync(file)) {
+    try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch (error) { console.error(`Ignoring ${file}: invalid JSON (${error.message}). Using defaults.`); }
+  }
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
+    if (fs.existsSync(file)) console.error(`Ignoring ${file}: settings must be a JSON object. Using defaults.`);
+    saved = {};
+  }
   const config = { ...DEFAULT_CONFIG };
   for (const key of ['monthlyPrice', 'weeksPerMonth', 'usdToCny']) if (Number.isFinite(saved[key]) && saved[key] > 0) config[key] = saved[key];
   if (saved.currency === 'USD' || saved.currency === 'CNY') config.currency = saved.currency;

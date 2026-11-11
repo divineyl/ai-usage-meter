@@ -74,6 +74,16 @@ test('a session counts each response once and includes its subagents', () => {
   near(s.usdTotal, expected);
 });
 
+test('a missing projects folder says where transcripts are read from', () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = path.join(home, 'missing-claude');
+  try {
+    assert.throws(() => scan('nope'), /Claude session folder not found/);
+  } finally {
+    process.env.CLAUDE_CONFIG_DIR = previous;
+  }
+});
+
 test('window sums only count responses inside each window', () => {
   const id = '22222222-2222-4222-8222-222222222222';
   fs.writeFileSync(path.join(project, id + '.jsonl'),
