@@ -159,7 +159,8 @@ function readConfig(dir = __dirname) {
   }
   const config = { ...DEFAULT_CONFIG };
   for (const key of ['monthlyPrice', 'weeksPerMonth', 'usdToCny']) if (Number.isFinite(saved[key]) && saved[key] > 0) config[key] = saved[key];
-  if (saved.currency === 'USD' || saved.currency === 'CNY') config.currency = saved.currency;
+  const currency = typeof saved.currency === 'string' ? saved.currency.toUpperCase() : '';
+  if (currency === 'USD' || currency === 'CNY') config.currency = currency;
   return config;
 }
 module.exports = { readMetadata, readTokenBreakdown, readApiCost, readConfig, DEFAULT_CONFIG, PRICES };
