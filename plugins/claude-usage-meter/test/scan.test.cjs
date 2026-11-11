@@ -37,6 +37,29 @@ test('Sonnet 5.5 cache hits are $0.10 per million tokens', () => {
   near(priceResponse('claude-sonnet-5', usage(0, 0, 0, 1e6, 0)).usd.cacheRead, 0.2);
 });
 
+test('Fable 5.2, Mythos 5.2, and Mythos 5 use their published rows', () => {
+  for (const model of ['claude-fable-5-2', 'claude-mythos-5-2', 'claude-fable-5-2-20261109']) {
+    const { usd } = priceResponse(model, usage(1e6, 1e6, 1e6, 1e6, 1e6));
+    near(usd.uncachedInput, 8); near(usd.cacheWrite, 26); near(usd.cacheRead, 0.2); near(usd.output, 40);
+  }
+  const mythos = priceResponse('claude-mythos-5', usage(1e6, 1e6, 1e6, 1e6, 1e6)).usd;
+  near(mythos.uncachedInput, 10); near(mythos.cacheWrite, 32.5); near(mythos.cacheRead, 1); near(mythos.output, 50);
+  // A dated Mythos 5 id must not inherit Mythos 5.1's $0.25 hit.
+  near(priceResponse('claude-mythos-5-20260609', usage(0, 0, 0, 1e6, 0)).usd.cacheRead, 1);
+});
+
+test('retired Opus 4 and Sonnet 4 snapshots keep their own rows', () => {
+  const opus = priceResponse('claude-opus-4-1-20250805', usage(1e6, 1e6, 1e6, 1e6, 1e6)).usd;
+  near(opus.uncachedInput, 15); near(opus.cacheWrite, 48.75); near(opus.cacheRead, 1.5); near(opus.output, 75);
+  near(priceResponse('claude-opus-4-20250514', usage(0, 0, 0, 1e6, 0)).usd.cacheRead, 1.5);
+  const sonnet = priceResponse('claude-sonnet-4-20250514', usage(1e6, 1e6, 1e6, 1e6, 1e6)).usd;
+  near(sonnet.uncachedInput, 3); near(sonnet.cacheWrite, 9.75); near(sonnet.cacheRead, 0.3); near(sonnet.output, 15);
+  // Shorter prefixes must not steal the longer ids already in the table.
+  near(priceResponse('claude-opus-4-8', usage(1e6, 0, 0, 0, 0)).usd.uncachedInput, 5);
+  near(priceResponse('claude-opus-4-5-20251101', usage(1e6, 0, 0, 0, 0)).usd.uncachedInput, 5);
+  near(priceResponse('claude-sonnet-4-6', usage(1e6, 0, 0, 0, 0)).usd.uncachedInput, 3);
+});
+
 test('Haiku 5.5 prompts over 100K and fast mode cost more', () => {
   const short = priceResponse('claude-haiku-5-5', usage(50000, 0, 0, 0, 1000)).usd;
   const long = priceResponse('claude-haiku-5-5', usage(50000, 0, 0, 60000, 1000)).usd;
