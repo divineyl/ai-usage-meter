@@ -1,0 +1,43 @@
+name: CI
+
+# Locally, from a checkout with Node.js >= 22.5: npm test
+# That is the script in package.json and the command in the README 开发 section.
+# There are no dependencies and no lockfile, so this job does not install packages.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ["22", "24", "26"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+
+      - name: Run tests
+        env:
+          NPM_CONFIG_UPDATE_NOTIFIER: "false"
+        run: npm test
