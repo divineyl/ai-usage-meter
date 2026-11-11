@@ -9,20 +9,28 @@ const path = require('node:path');
 const os = require('node:os');
 
 // USD per 1M tokens: input, 5-minute cache write, 1-hour cache write, cache read, output.
+// Checked 2026-11-11 against https://platform.claude.com/docs/en/about-claude/pricing
 const PRICES = {
+  // Longer ids stay above the shorter ids they prefix. priceFor uses the first match.
+  'claude-fable-5-2': [8, 10, 16, 0.2, 40],
+  'claude-mythos-5-2': [8, 10, 16, 0.2, 40],
   'claude-fable-5-1': [10, 12.5, 20, 0.25, 50],
   'claude-mythos-5-1': [10, 12.5, 20, 0.25, 50],
   'claude-fable-5': [10, 12.5, 20, 1, 50],
+  'claude-mythos-5': [10, 12.5, 20, 1, 50],
   'claude-opus-5-5': [4, 5, 8, 0.2, 20],
   'claude-opus-5': [5, 6.25, 10, 0.5, 25],
   'claude-opus-4-8': [5, 6.25, 10, 0.5, 25],
   'claude-opus-4-7': [5, 6.25, 10, 0.5, 25],
   'claude-opus-4-6': [5, 6.25, 10, 0.5, 25],
   'claude-opus-4-5': [5, 6.25, 10, 0.5, 25],
-  'claude-sonnet-5-5': [2, 2.5, 4, 0.2, 10],
+  'claude-opus-4-1': [15, 18.75, 30, 1.5, 75],
+  'claude-opus-4': [15, 18.75, 30, 1.5, 75],
+  'claude-sonnet-5-5': [2, 2.5, 4, 0.1, 10],
   'claude-sonnet-5': [2, 2.5, 4, 0.2, 10],
   'claude-sonnet-4-6': [3, 3.75, 6, 0.3, 15],
   'claude-sonnet-4-5': [3, 3.75, 6, 0.3, 15],
+  'claude-sonnet-4': [3, 3.75, 6, 0.3, 15],
   'claude-haiku-5-5': [0.1, 0.125, 0.2, 0.01, 0.5],
   'claude-haiku-4-5': [1, 1.25, 2, 0.1, 5]
 };
