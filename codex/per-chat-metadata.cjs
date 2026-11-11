@@ -50,17 +50,42 @@ function readTokenBreakdown(file) {
 // tier, which is the API default. ttl_30m_tokens and ttl_12h_tokens are billed apart
 // when a rollout records them. Prompts over 272K: 2x input/cache/writes and 1.5x output,
 // unless long is false.
+const tier = (input, cached, output, write30m, write12h, long = true) => ({ input, cached, output, write30m, write12h, long });
 const PRICES = {
-  'gpt-6-astra': { input: 10, cached: 1, output: 50, write30m: 1.25, write12h: 2.5 },
-  'gpt-6.1-sol': { input: 2, cached: 0.1, output: 10, write30m: 1.25, write12h: 2.5 },
-  'gpt-6.1-terra': { input: 1, cached: 0.05, output: 5, write30m: 1.25, write12h: 2.5 },
-  'gpt-6-luna': { input: 0.1, cached: 0.01, output: 0.5, write30m: 1.25, write12h: 2.5 }
+  'gpt-6-astra': tier(10, 1, 50, 1.25, 2.5),
+  'gpt-6.1-sol': tier(2, 0.1, 10, 1.25, 2.5),
+  'gpt-6.1-terra': tier(1, 0.05, 5, 1.25, 2.5),
+  'gpt-6-luna': tier(0.1, 0.01, 0.5, 1.25, 2.5),
+  'gpt-6-sol': tier(2, 0.2, 10, 1.25, 2.5),
+  'gpt-5.6-sol': tier(4, 0.4, 20, 1.25, 2.5),
+  'gpt-5.6-terra': tier(2, 0.2, 12, 1.25, 2.5),
+  'gpt-5.6-luna': tier(0.2, 0.02, 1.2, 1.25, 2.5),
+  'gpt-5.5': tier(5, 0.5, 30, 1, null),
+  'gpt-5.5-pro': tier(30, null, 180, 1, null),
+  'gpt-5.4': tier(2.5, 0.25, 15, 1, null),
+  'gpt-5.4-pro': tier(30, null, 180, 1, null),
+  'gpt-5.4-mini': tier(0.75, 0.075, 4.5, 1, null, false),
+  'gpt-5.4-nano': tier(0.2, 0.02, 1.25, 1, null, false),
+  'gpt-5.3-codex': tier(1.75, 0.175, 14, 1, null, false),
+  'gpt-5.2': tier(1.75, 0.175, 14, 1, null, false),
+  'gpt-5.2-pro': tier(21, null, 168, 1, null, false),
+  'gpt-5.1': tier(1.25, 0.125, 10, 1, null, false),
+  'gpt-5': tier(1.25, 0.125, 10, 1, null, false),
+  'gpt-5-mini': tier(0.25, 0.025, 2, 1, null, false),
+  'gpt-5-nano': tier(0.05, 0.005, 0.4, 1, null, false),
+  'gpt-5-pro': tier(15, null, 120, 1, null, false),
+  'gpt-4.1': tier(2, 0.5, 8, 1, null, false),
+  'gpt-4.1-mini': tier(0.4, 0.1, 1.6, 1, null, false),
+  'gpt-4o': tier(2.5, 1.25, 10, 1, null, false),
+  'gpt-4o-mini': tier(0.15, 0.075, 0.6, 1, null, false),
+  'o3': tier(2, 0.5, 8, 1, null, false),
+  'o3-pro': tier(20, null, 80, 1, null, false)
 };
 const LONG_CONTEXT = 272000, CACHE_WRITE = 1.25;
 const costCache = new Map();
 function requestCost(price, delta, promptInput) {
   const long = price.long !== false && promptInput > LONG_CONTEXT, inRate = long ? 2 : 1, outRate = long ? 1.5 : 1;
-  if (delta.cached > 0 && !(price.cached >= 0)) return null;
+  if (delta.cached > 0 && typeof price.cached !== 'number') return null;
   const cachedPrice = price.cached ?? 0;
   let write30, write12;
   if (delta.write30m != null || delta.write12h != null) {
